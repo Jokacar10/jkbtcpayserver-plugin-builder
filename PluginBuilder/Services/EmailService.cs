@@ -103,7 +103,7 @@ BTCPay Server Plugin Builder";
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error sending verification email to {Email}", toEmail);
+            logger.LogError(ex, "Error sending verification email");
             return false;
         }
     }

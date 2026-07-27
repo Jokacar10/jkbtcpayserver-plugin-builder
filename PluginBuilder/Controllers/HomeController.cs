@@ -146,7 +146,7 @@ public class HomeController(
             var email = user.Email!;
             var sent = await emailService.SendVerifyEmail(email, link);
             TempData[TempDataConstant.WarningMessage] = sent
-                ? $"Please confirm your email to sign in. We've sent a confirmation link to {email}."
+                ? "Please confirm your email to sign in. We've sent a confirmation link to your account email."
                 : "We couldn't send the verification email. Please try again in a moment, or contact support if the problem persists.";
             return View(model);
         }
@@ -197,11 +197,12 @@ public class HomeController(
                 Request.Scheme, Request.Host.ToString());
 
             var sent = await emailService.SendVerifyEmail(model.Email, link!);
-            if (!sent)
-                TempData[TempDataConstant.WarningMessage] =
-                    "Your account was created, but we couldn't send the verification email. Please try signing in again to resend it, or contact support if the problem persists.";
+            if (sent)
+                return RedirectToAction(nameof(VerifyEmail), new { email = user.Email });
+            TempData[TempDataConstant.WarningMessage] =
+                "Your account was created, but we couldn't send the verification email. Please try signing in again to resend it, or contact support if the problem persists.";
+            return RedirectToAction(nameof(Login));
 
-            return RedirectToAction(nameof(VerifyEmail), new { email = user.Email });
         }
 
         await signInManager.SignInAsync(user, false);

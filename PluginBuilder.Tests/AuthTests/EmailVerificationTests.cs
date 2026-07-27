@@ -3,6 +3,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit;
+using PluginBuilder.Controllers.Logic;
+using PluginBuilder.DataModels;
+using PluginBuilder.Services;
+using PluginBuilder.Util.Extensions;
+using PluginBuilder.ViewModels.Admin;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -80,6 +85,51 @@ public class EmailVerificationTests(ITestOutputHelper output) : PageTest
 
         await Expect(tester.Page!).Not.ToHaveURLAsync(new Regex("/verifyemail", RegexOptions.IgnoreCase));
         Assert.False(await IsEmailConfirmed(tester, email), "No verification email means the account stays unconfirmed");
+    }
+
+    [Fact]
+    public async Task Registration_WhenVerifyEmailDeliveryFails_ReturnsToLogin()
+    {
+        await using var tester = new PlaywrightTester(_log);
+        tester.Server.ReuseDatabase = false;
+        await tester.StartAsync();
+
+        await ConfigureBrokenSmtp(tester);
+        await tester.CreateServerAdminAsync();
+
+        var email = $"verify-fail-{Guid.NewGuid():N}@test.com";
+        await RegisterViaUi(tester, email);
+
+        var page = tester.Page!;
+        await Expect(page).ToHaveURLAsync(new Regex(".*/login$", RegexOptions.IgnoreCase));
+        await Expect(page.Locator(".alert-warning")).ToContainTextAsync("couldn't send the verification email");
+        await Expect(page.Locator("body")).Not.ToContainTextAsync("Please check your email");
+        Assert.False(await IsEmailConfirmed(tester, email), "Failed verification email delivery must leave the account unconfirmed");
+    }
+
+    [Fact]
+    public async Task AccountVerifyEmail_WhenDeliveryFails_ReturnsToAccountDetails()
+    {
+        await using var tester = new PlaywrightTester(_log);
+        tester.Server.ReuseDatabase = false;
+        await tester.StartAsync();
+
+        await ConfigureBrokenSmtp(tester);
+        await DisableEmailVerificationForLogin(tester);
+
+        var email = $"account-verify-fail-{Guid.NewGuid():N}@test.com";
+        await tester.Server.CreateFakeUserAsync(email, confirmEmail: false, githubVerified: false);
+
+        await tester.LogIn(email);
+        await tester.Page!.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+        await tester.GoToUrl("/account/details");
+        await tester.Page.ClickAsync("a:has-text('Verify Email')");
+
+        var page = tester.Page;
+        await Expect(page).ToHaveURLAsync(new Regex(".*/account/details$", RegexOptions.IgnoreCase));
+        await Expect(page.Locator(".alert-warning")).ToContainTextAsync("couldn't send the verification email");
+        await Expect(page.Locator("body")).Not.ToContainTextAsync("Please check your email");
+        Assert.False(await IsEmailConfirmed(tester, email), "Failed resend must leave the account unconfirmed");
     }
 
     [Fact]
@@ -179,6 +229,24 @@ public class EmailVerificationTests(ITestOutputHelper output) : PageTest
         await tester.Page.FillAsync("#ConfirmPassword", "123456");
         await tester.Page.ClickAsync("#RegisterButton");
         await Assertions.Expect(tester.Page).Not.ToHaveURLAsync(new Regex(".*/register$", RegexOptions.IgnoreCase));
+    }
+
+    private static Task ConfigureBrokenSmtp(PlaywrightTester tester) =>
+        tester.Server.GetService<EmailService>().SaveEmailSettingsToDatabase(new EmailSettingsViewModel
+        {
+            Server = "127.0.0.1",
+            Port = 1,
+            Username = "plugin-builder@example.com",
+            From = "plugin-builder@example.com",
+            Password = "password",
+            DisableCertificateCheck = true
+        });
+
+    private static async Task DisableEmailVerificationForLogin(PlaywrightTester tester)
+    {
+        await using var conn = await tester.Server.GetService<DBConnectionFactory>().Open();
+        await conn.SettingsSetAsync(SettingsKeys.VerifiedEmailForLogin, "false");
+        await tester.Server.GetService<AdminSettingsCache>().RefreshIsVerifiedEmailRequiredForLogin(conn);
     }
 
     private static async Task<bool> IsEmailConfirmed(PlaywrightTester tester, string email)
