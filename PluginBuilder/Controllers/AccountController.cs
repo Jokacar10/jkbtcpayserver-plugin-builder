@@ -37,7 +37,13 @@ public class AccountController(
             var link = Url.Action(nameof(HomeController.ConfirmEmail), "Home", new { uid = user.Id, token },
                 Request.Scheme, Request.Host.ToString())!;
 
-            await emailService.SendVerifyEmail(user.Email!, link);
+            var sent = await emailService.SendVerifyEmail(user.Email!, link);
+            if (!sent)
+            {
+                TempData[TempDataConstant.WarningMessage] =
+                    "We couldn't send the verification email. Please try again in a moment, or contact support if the problem persists.";
+                return RedirectToAction(nameof(AccountDetails));
+            }
 
             var action = nameof(HomeController.VerifyEmail);
             var ctrl = nameof(HomeController).Replace("Controller", "");
